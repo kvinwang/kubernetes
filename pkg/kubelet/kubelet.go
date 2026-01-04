@@ -73,6 +73,7 @@ import (
 	dockerremote "k8s.io/kubernetes/pkg/kubelet/dockershim/remote"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/eviction"
+	"k8s.io/kubernetes/pkg/kubelet/externalagent"
 	"k8s.io/kubernetes/pkg/kubelet/images"
 	"k8s.io/kubernetes/pkg/kubelet/kubeletconfig"
 	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
@@ -661,6 +662,29 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		klet.runtimeClassManager = runtimeclass.NewManager(kubeDeps.DynamicKubeClient)
 	}
 
+	// Setup internal container lifecycle, optionally wrapping with external agent
+	internalLifecycle := kubeDeps.ContainerManager.InternalContainerLifecycle()
+	if kubeCfg.ExternalAgentSocketPath != "" {
+		glog.Infof("Setting up external agent container lifecycle hooks with socket: %s", kubeCfg.ExternalAgentSocketPath)
+		agentTimeout := kubeCfg.ExternalAgentTimeout.Duration
+		if agentTimeout == 0 {
+			agentTimeout = externalagent.DefaultTimeout
+		}
+		agentClient, err := externalagent.NewUnixSocketClient(kubeCfg.ExternalAgentSocketPath, agentTimeout)
+		if err != nil {
+			glog.Warningf("Failed to connect to external agent at %s: %v. Container lifecycle hooks will use default behavior.",
+				kubeCfg.ExternalAgentSocketPath, err)
+		} else {
+			klet.externalAgentClient = agentClient
+			internalLifecycle = externalagent.NewExternalAgentContainerLifecycle(
+				internalLifecycle,
+				agentClient,
+				kubeCfg.ExternalAgentBlockOnLifecycle,
+			)
+			glog.Infof("External agent container lifecycle hooks registered (block-on-failure: %v)", kubeCfg.ExternalAgentBlockOnLifecycle)
+		}
+	}
+
 	runtime, err := kuberuntime.NewKubeGenericRuntimeManager(
 		kubecontainer.FilterEventRecorder(kubeDeps.Recorder),
 		klet.livenessManager,
@@ -679,7 +703,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		kubeCfg.CPUCFSQuotaPeriod,
 		runtimeService,
 		imageService,
-		kubeDeps.ContainerManager.InternalContainerLifecycle(),
+		internalLifecycle,
 		legacyLogProvider,
 		klet.runtimeClassManager,
 	)
@@ -854,6 +878,14 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 
 	criticalPodAdmissionHandler := preemption.NewCriticalPodAdmissionHandler(klet.GetActivePods, killPodNow(klet.podWorkers, kubeDeps.Recorder), kubeDeps.Recorder)
 	klet.admitHandlers.AddPodAdmitHandler(lifecycle.NewPredicateAdmitHandler(klet.getNodeAnyWay, criticalPodAdmissionHandler, klet.containerManager.UpdatePluginResources))
+
+	// Add external agent pod admission handler if external agent is configured and connected
+	if klet.externalAgentClient != nil {
+		failOpen := kubeCfg.ExternalAgentFailOpen
+		klet.admitHandlers.AddPodAdmitHandler(externalagent.NewExternalAgentAdmitHandler(klet.externalAgentClient, failOpen))
+		glog.Infof("External agent pod admission handler registered (fail-open: %v)", failOpen)
+	}
+
 	// apply functional Option's
 	for _, opt := range kubeDeps.Options {
 		opt(klet)
@@ -1135,6 +1167,10 @@ type Kubelet struct {
 	// TODO: think about moving this to be centralized in PodWorkers in follow-on.
 	// the list of handlers to call during pod admission.
 	admitHandlers lifecycle.PodAdmitHandlers
+
+	// externalAgentClient is the client for communicating with external agent
+	// for pod admission and container lifecycle hooks
+	externalAgentClient externalagent.ExternalAgentClient
 
 	// softAdmithandlers are applied to the pod after it is admitted by the Kubelet, but before it is
 	// run. A pod rejected by a softAdmitHandler will be left in a Pending state indefinitely. If a

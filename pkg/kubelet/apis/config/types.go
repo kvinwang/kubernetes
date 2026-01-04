@@ -305,6 +305,23 @@ type KubeletConfiguration struct {
 	// This flag accepts a list of options. Acceptable options are `pods`, `system-reserved` & `kube-reserved`.
 	// Refer to [Node Allocatable](https://git.k8s.io/community/contributors/design-proposals/node/node-allocatable.md) doc for more information.
 	EnforceNodeAllocatable []string
+
+	/* External Agent Configuration */
+
+	// ExternalAgentSocketPath is the path to the Unix domain socket for
+	// communicating with an external agent. If set, the kubelet will connect
+	// to the agent for pod admission decisions and container lifecycle hooks.
+	ExternalAgentSocketPath string
+	// ExternalAgentFailOpen determines the behavior when the external agent
+	// is unavailable. If true (default), pods are admitted when agent is unavailable.
+	// If false, pods are rejected when agent is unavailable.
+	ExternalAgentFailOpen bool
+	// ExternalAgentBlockOnLifecycle determines whether container operations
+	// should fail when external agent lifecycle hooks fail. Default is false.
+	ExternalAgentBlockOnLifecycle bool
+	// ExternalAgentTimeout is the timeout for external agent calls.
+	// Default is 30 seconds.
+	ExternalAgentTimeout metav1.Duration
 }
 
 type KubeletAuthorizationMode string
