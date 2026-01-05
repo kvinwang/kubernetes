@@ -58,6 +58,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/core/v1/validation"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
+	kubeletauthorizer "k8s.io/kubernetes/pkg/kubelet/authorizer"
 	"k8s.io/kubernetes/pkg/kubelet/server/portforward"
 	remotecommandserver "k8s.io/kubernetes/pkg/kubelet/server/remotecommand"
 	"k8s.io/kubernetes/pkg/kubelet/server/stats"
@@ -82,6 +83,7 @@ type Server struct {
 	restfulCont                containerInterface
 	resourceAnalyzer           stats.ResourceAnalyzer
 	redirectContainerStreaming bool
+	authorizerClient           kubeletauthorizer.AuthorizerClient
 }
 
 type TLSOptions struct {
@@ -129,9 +131,10 @@ func ListenAndServeKubeletServer(
 	enableDebuggingHandlers,
 	enableContentionProfiling,
 	redirectContainerStreaming bool,
-	criHandler http.Handler) {
+	criHandler http.Handler,
+	authorizerClient kubeletauthorizer.AuthorizerClient) {
 	glog.Infof("Starting to listen on %s:%d", address, port)
-	handler := NewServer(host, resourceAnalyzer, auth, enableDebuggingHandlers, enableContentionProfiling, redirectContainerStreaming, criHandler)
+	handler := NewServer(host, resourceAnalyzer, auth, enableDebuggingHandlers, enableContentionProfiling, redirectContainerStreaming, criHandler, authorizerClient)
 	s := &http.Server{
 		Addr:           net.JoinHostPort(address.String(), strconv.FormatUint(uint64(port), 10)),
 		Handler:        &handler,
@@ -151,7 +154,7 @@ func ListenAndServeKubeletServer(
 // ListenAndServeKubeletReadOnlyServer initializes a server to respond to HTTP network requests on the Kubelet.
 func ListenAndServeKubeletReadOnlyServer(host HostInterface, resourceAnalyzer stats.ResourceAnalyzer, address net.IP, port uint) {
 	glog.V(1).Infof("Starting to listen read-only on %s:%d", address, port)
-	s := NewServer(host, resourceAnalyzer, nil, false, false, false, nil)
+	s := NewServer(host, resourceAnalyzer, nil, false, false, false, nil, nil)
 
 	server := &http.Server{
 		Addr:           net.JoinHostPort(address.String(), strconv.FormatUint(uint64(port), 10)),
@@ -194,16 +197,22 @@ func NewServer(
 	enableDebuggingHandlers,
 	enableContentionProfiling,
 	redirectContainerStreaming bool,
-	criHandler http.Handler) Server {
+	criHandler http.Handler,
+	authorizerClient kubeletauthorizer.AuthorizerClient) Server {
 	server := Server{
 		host:                       host,
 		resourceAnalyzer:           resourceAnalyzer,
 		auth:                       auth,
 		restfulCont:                &filteringContainer{Container: restful.NewContainer()},
 		redirectContainerStreaming: redirectContainerStreaming,
+		authorizerClient:           authorizerClient,
 	}
 	if auth != nil {
 		server.InstallAuthFilter()
+	}
+	// Install Authorizer filter after auth filter
+	if authorizerClient != nil {
+		server.InstallAuthorizerFilter()
 	}
 	server.InstallDefaultHandlers()
 	if enableDebuggingHandlers {
@@ -253,6 +262,81 @@ func (s *Server) InstallAuthFilter() {
 		// Continue
 		chain.ProcessFilter(req, resp)
 	})
+}
+
+// InstallAuthorizerFilter installs the Authorizer filter.
+// This filter checks with the Authorizer for sensitive API operations like exec, attach, portForward.
+func (s *Server) InstallAuthorizerFilter() {
+	s.restfulCont.Filter(func(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
+		path := req.Request.URL.Path
+
+		// Only check sensitive operations
+		if !s.isSensitiveOperation(path) {
+			chain.ProcessFilter(req, resp)
+			return
+		}
+
+		// Build authorization request
+		authReq := &kubeletauthorizer.APIAuthorizationRequest{
+			Path:          path,
+			Method:        req.Request.Method,
+			PodNamespace:  req.PathParameter("podNamespace"),
+			PodName:       req.PathParameter("podID"),
+			ContainerName: req.PathParameter("containerName"),
+			SourceIP:      req.Request.RemoteAddr,
+		}
+
+		// Get command for exec/run requests
+		if strings.HasPrefix(path, "/exec") || strings.HasPrefix(path, "/run") {
+			authReq.Command = req.Request.URL.Query()["command"]
+		}
+
+		// Get user info if available (from context set by auth filter)
+		if s.auth != nil {
+			if u, ok, _ := s.auth.AuthenticateRequest(req.Request); ok {
+				authReq.User = u.GetName()
+				authReq.Groups = u.GetGroups()
+			}
+		}
+
+		// Check with Authorizer
+		authResp, err := s.authorizerClient.CheckAPIAuthorization(authReq)
+		if err != nil {
+			glog.Errorf("Authorizer API authorization error: %v", err)
+			// Fail-open: allow on error
+			chain.ProcessFilter(req, resp)
+			return
+		}
+
+		if !authResp.Allowed {
+			msg := fmt.Sprintf("Authorizer denied: %s - %s", authResp.Reason, authResp.Message)
+			glog.V(2).Infof("API request denied by Authorizer: %s %s (user=%s, pod=%s/%s)",
+				req.Request.Method, path, authReq.User, authReq.PodNamespace, authReq.PodName)
+			resp.WriteErrorString(http.StatusForbidden, msg)
+			return
+		}
+
+		glog.V(4).Infof("API request allowed by Authorizer: %s %s (user=%s, pod=%s/%s)",
+			req.Request.Method, path, authReq.User, authReq.PodNamespace, authReq.PodName)
+		chain.ProcessFilter(req, resp)
+	})
+}
+
+// isSensitiveOperation returns true if the path is a sensitive operation requiring Authorizer check
+func (s *Server) isSensitiveOperation(path string) bool {
+	sensitivePathPrefixes := []string{
+		"/exec/",
+		"/attach/",
+		"/portForward/",
+		"/run/",
+		"/containerLogs/",
+	}
+	for _, prefix := range sensitivePathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // InstallDefaultHandlers registers the default set of supported HTTP request

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package externalagent
+package authorizer
 
 import (
 	"fmt"
@@ -24,25 +24,25 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 )
 
-// ExternalAgentContainerLifecycle wraps the internal container lifecycle
-// and adds external agent hooks for measurement and monitoring.
-type ExternalAgentContainerLifecycle struct {
+// ContainerLifecycle wraps the internal container lifecycle
+// and adds Authorizer hooks for measurement and monitoring.
+type ContainerLifecycle struct {
 	// inner is the wrapped InternalContainerLifecycle
 	inner cm.InternalContainerLifecycle
-	// client is the external agent client
-	client ExternalAgentClient
+	// client is the Authorizer client
+	client AuthorizerClient
 	// blockOnFailure determines if container operations should fail
-	// when external agent is unavailable
+	// when Authorizer is unavailable
 	blockOnFailure bool
 }
 
-// NewExternalAgentContainerLifecycle creates a new lifecycle wrapper
-func NewExternalAgentContainerLifecycle(
+// NewContainerLifecycle creates a new lifecycle wrapper
+func NewContainerLifecycle(
 	inner cm.InternalContainerLifecycle,
-	client ExternalAgentClient,
+	client AuthorizerClient,
 	blockOnFailure bool,
-) *ExternalAgentContainerLifecycle {
-	return &ExternalAgentContainerLifecycle{
+) *ContainerLifecycle {
+	return &ContainerLifecycle{
 		inner:          inner,
 		client:         client,
 		blockOnFailure: blockOnFailure,
@@ -50,11 +50,11 @@ func NewExternalAgentContainerLifecycle(
 }
 
 // PreStartContainer is called before a container starts
-func (l *ExternalAgentContainerLifecycle) PreStartContainer(pod *v1.Pod, container *v1.Container, containerID string) error {
-	glog.V(4).Infof("External agent PreStartContainer for %s/%s container %s (ID: %s)",
+func (l *ContainerLifecycle) PreStartContainer(pod *v1.Pod, container *v1.Container, containerID string) error {
+	glog.V(4).Infof("Authorizer PreStartContainer for %s/%s container %s (ID: %s)",
 		pod.Namespace, pod.Name, container.Name, containerID)
 
-	// Call external agent first for measurement/authorization
+	// Call Authorizer first for measurement/authorization
 	req := &ContainerLifecycleRequest{
 		Pod:         pod,
 		Container:   container,
@@ -64,22 +64,22 @@ func (l *ExternalAgentContainerLifecycle) PreStartContainer(pod *v1.Pod, contain
 
 	resp, err := l.client.OnContainerLifecycle(req)
 	if err != nil {
-		glog.Errorf("External agent PreStartContainer failed for %s/%s container %s: %v",
+		glog.Errorf("Authorizer PreStartContainer failed for %s/%s container %s: %v",
 			pod.Namespace, pod.Name, container.Name, err)
 		if l.blockOnFailure {
-			return fmt.Errorf("external agent PreStartContainer failed: %v", err)
+			return fmt.Errorf("Authorizer PreStartContainer failed: %v", err)
 		}
 		// Continue without blocking
 	} else if !resp.Success {
-		glog.Warningf("External agent PreStartContainer returned failure for %s/%s container %s: %s",
+		glog.Warningf("Authorizer PreStartContainer returned failure for %s/%s container %s: %s",
 			pod.Namespace, pod.Name, container.Name, resp.Message)
 		if l.blockOnFailure {
-			return fmt.Errorf("external agent rejected PreStartContainer: %s", resp.Message)
+			return fmt.Errorf("Authorizer rejected PreStartContainer: %s", resp.Message)
 		}
 	} else {
 		// Log any measurements
 		if len(resp.Measurements) > 0 {
-			glog.V(3).Infof("External agent PreStartContainer measurements for %s/%s container %s: %v",
+			glog.V(3).Infof("Authorizer PreStartContainer measurements for %s/%s container %s: %v",
 				pod.Namespace, pod.Name, container.Name, resp.Measurements)
 		}
 	}
@@ -92,10 +92,10 @@ func (l *ExternalAgentContainerLifecycle) PreStartContainer(pod *v1.Pod, contain
 }
 
 // PreStopContainer is called before a container stops
-func (l *ExternalAgentContainerLifecycle) PreStopContainer(containerID string) error {
-	glog.V(4).Infof("External agent PreStopContainer for container ID: %s", containerID)
+func (l *ContainerLifecycle) PreStopContainer(containerID string) error {
+	glog.V(4).Infof("Authorizer PreStopContainer for container ID: %s", containerID)
 
-	// Call external agent for measurement/cleanup
+	// Call Authorizer for measurement/cleanup
 	req := &ContainerLifecycleRequest{
 		ContainerID: containerID,
 		Event:       ContainerPreStop,
@@ -103,13 +103,13 @@ func (l *ExternalAgentContainerLifecycle) PreStopContainer(containerID string) e
 
 	resp, err := l.client.OnContainerLifecycle(req)
 	if err != nil {
-		glog.Warningf("External agent PreStopContainer failed for container %s: %v", containerID, err)
-		// Don't block container stop on agent errors
+		glog.Warningf("Authorizer PreStopContainer failed for container %s: %v", containerID, err)
+		// Don't block container stop on Authorizer errors
 	} else if !resp.Success {
-		glog.Warningf("External agent PreStopContainer returned failure for container %s: %s",
+		glog.Warningf("Authorizer PreStopContainer returned failure for container %s: %s",
 			containerID, resp.Message)
 	} else if len(resp.Measurements) > 0 {
-		glog.V(3).Infof("External agent PreStopContainer measurements for container %s: %v",
+		glog.V(3).Infof("Authorizer PreStopContainer measurements for container %s: %v",
 			containerID, resp.Measurements)
 	}
 
@@ -121,10 +121,10 @@ func (l *ExternalAgentContainerLifecycle) PreStopContainer(containerID string) e
 }
 
 // PostStopContainer is called after a container stops
-func (l *ExternalAgentContainerLifecycle) PostStopContainer(containerID string) error {
-	glog.V(4).Infof("External agent PostStopContainer for container ID: %s", containerID)
+func (l *ContainerLifecycle) PostStopContainer(containerID string) error {
+	glog.V(4).Infof("Authorizer PostStopContainer for container ID: %s", containerID)
 
-	// Call external agent for final measurement/cleanup
+	// Call Authorizer for final measurement/cleanup
 	req := &ContainerLifecycleRequest{
 		ContainerID: containerID,
 		Event:       ContainerPostStop,
@@ -132,13 +132,13 @@ func (l *ExternalAgentContainerLifecycle) PostStopContainer(containerID string) 
 
 	resp, err := l.client.OnContainerLifecycle(req)
 	if err != nil {
-		glog.Warningf("External agent PostStopContainer failed for container %s: %v", containerID, err)
-		// Don't block on agent errors
+		glog.Warningf("Authorizer PostStopContainer failed for container %s: %v", containerID, err)
+		// Don't block on Authorizer errors
 	} else if !resp.Success {
-		glog.Warningf("External agent PostStopContainer returned failure for container %s: %s",
+		glog.Warningf("Authorizer PostStopContainer returned failure for container %s: %s",
 			containerID, resp.Message)
 	} else if len(resp.Measurements) > 0 {
-		glog.V(3).Infof("External agent PostStopContainer measurements for container %s: %v",
+		glog.V(3).Infof("Authorizer PostStopContainer measurements for container %s: %v",
 			containerID, resp.Measurements)
 	}
 
@@ -149,5 +149,5 @@ func (l *ExternalAgentContainerLifecycle) PostStopContainer(containerID string) 
 	return nil
 }
 
-// Ensure ExternalAgentContainerLifecycle implements InternalContainerLifecycle
-var _ cm.InternalContainerLifecycle = &ExternalAgentContainerLifecycle{}
+// Ensure ContainerLifecycle implements InternalContainerLifecycle
+var _ cm.InternalContainerLifecycle = &ContainerLifecycle{}

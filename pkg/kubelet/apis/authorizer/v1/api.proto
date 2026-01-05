@@ -1,0 +1,128 @@
+// To regenerate api.pb.go run hack/update-generated-authorizer.sh
+syntax = 'proto3';
+
+package v1;
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+option (gogoproto.goproto_stringer_all) = false;
+option (gogoproto.stringer_all) = true;
+option (gogoproto.goproto_getters_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unrecognized_all) = false;
+
+// AuthorizerService defines the gRPC service for kubelet authorization
+service AuthorizerService {
+    // CheckPodAdmission checks if a pod should be admitted to the node
+    rpc CheckPodAdmission(PodAdmissionRequest) returns (PodAdmissionResponse) {}
+
+    // OnContainerLifecycle is called on container lifecycle events
+    rpc OnContainerLifecycle(ContainerLifecycleRequest) returns (ContainerLifecycleResponse) {}
+
+    // GetPodMeasurement requests measurements for a pod
+    rpc GetPodMeasurement(PodMeasurementRequest) returns (PodMeasurementResponse) {}
+
+    // CheckAPIAuthorization checks if an incoming API request should be allowed
+    rpc CheckAPIAuthorization(APIAuthorizationRequest) returns (APIAuthorizationResponse) {}
+}
+
+// PodAdmissionRequest contains the information sent for pod admission
+message PodAdmissionRequest {
+    // Pod is the pod being admitted, serialized as JSON (k8s.io/api/core/v1.Pod)
+    bytes pod_json = 1;
+    // OtherPods are other pods currently on this node, serialized as JSON array
+    bytes other_pods_json = 2;
+}
+
+// PodAdmissionResponse contains the authorizer's decision
+message PodAdmissionResponse {
+    // Allowed indicates whether the pod should be admitted
+    bool allowed = 1;
+    // Reason is a brief CamelCase reason for rejection
+    string reason = 2;
+    // Message is a human-readable message explaining the decision
+    string message = 3;
+}
+
+// ContainerLifecycleEvent represents a container lifecycle event type
+enum ContainerLifecycleEvent {
+    UNKNOWN = 0;
+    PRE_START = 1;
+    POST_START = 2;
+    PRE_STOP = 3;
+    POST_STOP = 4;
+}
+
+// ContainerLifecycleRequest contains container lifecycle event information
+message ContainerLifecycleRequest {
+    // Pod is the pod containing the container, serialized as JSON
+    bytes pod_json = 1;
+    // Container is the container spec, serialized as JSON (k8s.io/api/core/v1.Container)
+    bytes container_json = 2;
+    // ContainerID is the runtime container ID
+    string container_id = 3;
+    // Event is the lifecycle event type
+    ContainerLifecycleEvent event = 4;
+}
+
+// ContainerLifecycleResponse contains the authorizer's response
+message ContainerLifecycleResponse {
+    // Success indicates whether the hook succeeded
+    bool success = 1;
+    // Message is a human-readable message
+    string message = 2;
+    // Measurements contains any measurements collected by the authorizer
+    map<string, string> measurements = 3;
+}
+
+// PodMeasurementRequest is sent to request pod measurements
+message PodMeasurementRequest {
+    // Pod is the pod to measure, serialized as JSON
+    bytes pod_json = 1;
+    // ContainerID is optional, for container-specific measurements
+    string container_id = 2;
+}
+
+// PodMeasurementResponse contains measurement results
+message PodMeasurementResponse {
+    // Success indicates whether the measurement succeeded
+    bool success = 1;
+    // Measurements is a map of measurement name to value
+    map<string, string> measurements = 2;
+    // Message is a human-readable message
+    string message = 3;
+}
+
+// APIAuthorizationRequest contains information about an incoming API request
+message APIAuthorizationRequest {
+    // Path is the request path (e.g., "/exec", "/attach", "/portForward")
+    string path = 1;
+    // Method is the HTTP method (GET, POST, etc.)
+    string method = 2;
+    // PodNamespace is the namespace of the target pod
+    string pod_namespace = 3;
+    // PodName is the name of the target pod
+    string pod_name = 4;
+    // ContainerName is the name of the target container
+    string container_name = 5;
+    // Command is the command to execute (for exec/run requests)
+    repeated string command = 6;
+    // User is the authenticated user making the request
+    string user = 7;
+    // Groups are the groups the user belongs to
+    repeated string groups = 8;
+    // SourceIP is the IP address of the client
+    string source_ip = 9;
+}
+
+// APIAuthorizationResponse contains the authorizer's decision for API authorization
+message APIAuthorizationResponse {
+    // Allowed indicates whether the request should be allowed
+    bool allowed = 1;
+    // Reason is a brief CamelCase reason for rejection
+    string reason = 2;
+    // Message is a human-readable message explaining the decision
+    string message = 3;
+}

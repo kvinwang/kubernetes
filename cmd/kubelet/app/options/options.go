@@ -561,4 +561,10 @@ func AddKubeletConfigFlags(mainfs *pflag.FlagSet, c *kubeletconfig.KubeletConfig
 	fs.StringSliceVar(&c.EnforceNodeAllocatable, "enforce-node-allocatable", c.EnforceNodeAllocatable, "A comma separated list of levels of node allocatable enforcement to be enforced by kubelet. Acceptable options are 'none', 'pods', 'system-reserved', and 'kube-reserved'. If the latter two options are specified, '--system-reserved-cgroup' and '--kube-reserved-cgroup' must also be set, respectively. If 'none' is specified, no additional options should be set. See https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/ for more details.")
 	fs.StringVar(&c.SystemReservedCgroup, "system-reserved-cgroup", c.SystemReservedCgroup, "Absolute name of the top level cgroup that is used to manage non-kubernetes components for which compute resources were reserved via '--system-reserved' flag. Ex. '/system-reserved'. [default='']")
 	fs.StringVar(&c.KubeReservedCgroup, "kube-reserved-cgroup", c.KubeReservedCgroup, "Absolute name of the top level cgroup that is used to manage kubernetes components for which compute resources were reserved via '--kube-reserved' flag. Ex. '/kube-reserved'. [default='']")
+
+	// Authorizer configuration
+	fs.StringVar(&c.AuthorizerSocketPath, "authorizer-socket", c.AuthorizerSocketPath, "Path to Unix socket or TCP address (host:port) for Kubelet Authorizer. If set, kubelet will consult the Authorizer for pod admission, container lifecycle, and API authorization.")
+	fs.BoolVar(&c.AuthorizerFailOpen, "authorizer-fail-open", c.AuthorizerFailOpen, "If true, operations are allowed when Authorizer is unavailable. If false, operations are rejected. Default is true.")
+	fs.BoolVar(&c.AuthorizerBlockOnLifecycle, "authorizer-block-lifecycle", c.AuthorizerBlockOnLifecycle, "If true, container operations fail when Authorizer lifecycle hooks fail. Default is false.")
+	fs.DurationVar(&c.AuthorizerTimeout.Duration, "authorizer-timeout", c.AuthorizerTimeout.Duration, "Timeout for Authorizer calls. Default is 30s.")
 }

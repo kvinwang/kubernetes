@@ -14,16 +14,44 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package externalagent provides interfaces for external agent hooks
-// that allow external processes to participate in kubelet's pod lifecycle
-// decisions and measurements.
-package externalagent
+// Package authorizer provides interfaces for the Kubelet Authorizer
+// that allows external authorization services to participate in kubelet's
+// policy decisions for pod admission, container lifecycle, and API access.
+package authorizer
 
 import (
+	"encoding/json"
+
 	"k8s.io/api/core/v1"
 )
 
-// PodAdmissionRequest contains the information sent to external agent
+// JSON serialization helpers for gRPC messages
+
+// MarshalPodJSON serializes a Pod to JSON bytes
+func MarshalPodJSON(pod *v1.Pod) ([]byte, error) {
+	if pod == nil {
+		return nil, nil
+	}
+	return json.Marshal(pod)
+}
+
+// MarshalPodsJSON serializes a slice of Pods to JSON bytes
+func MarshalPodsJSON(pods []*v1.Pod) ([]byte, error) {
+	if pods == nil {
+		return nil, nil
+	}
+	return json.Marshal(pods)
+}
+
+// MarshalContainerJSON serializes a Container to JSON bytes
+func MarshalContainerJSON(container *v1.Container) ([]byte, error) {
+	if container == nil {
+		return nil, nil
+	}
+	return json.Marshal(container)
+}
+
+// PodAdmissionRequest contains the information sent to Authorizer
 // for pod admission decision.
 type PodAdmissionRequest struct {
 	// Pod is the pod being admitted
@@ -32,7 +60,7 @@ type PodAdmissionRequest struct {
 	OtherPods []*v1.Pod
 }
 
-// PodAdmissionResponse contains the external agent's decision
+// PodAdmissionResponse contains the Authorizer's decision
 type PodAdmissionResponse struct {
 	// Allowed indicates whether the pod should be admitted
 	Allowed bool
@@ -68,13 +96,13 @@ const (
 	ContainerPostStop ContainerLifecycleEvent = "PostStop"
 )
 
-// ContainerLifecycleResponse contains the external agent's response
+// ContainerLifecycleResponse contains the Authorizer's response
 type ContainerLifecycleResponse struct {
 	// Success indicates whether the hook succeeded
 	Success bool
 	// Message is a human-readable message
 	Message string
-	// Measurements contains any measurements collected by the agent
+	// Measurements contains any measurements collected by the Authorizer
 	Measurements map[string]string
 }
 
@@ -96,8 +124,40 @@ type PodMeasurementResponse struct {
 	Message string
 }
 
-// ExternalAgentClient is the interface for communicating with external agent
-type ExternalAgentClient interface {
+// APIAuthorizationRequest contains information about an incoming API request
+type APIAuthorizationRequest struct {
+	// Path is the request path (e.g., "/exec", "/attach", "/portForward")
+	Path string
+	// Method is the HTTP method (GET, POST, etc.)
+	Method string
+	// PodNamespace is the namespace of the target pod (if applicable)
+	PodNamespace string
+	// PodName is the name of the target pod (if applicable)
+	PodName string
+	// ContainerName is the name of the target container (if applicable)
+	ContainerName string
+	// Command is the command to execute (for exec/run requests)
+	Command []string
+	// User is the authenticated user making the request
+	User string
+	// Groups are the groups the user belongs to
+	Groups []string
+	// SourceIP is the IP address of the client
+	SourceIP string
+}
+
+// APIAuthorizationResponse contains the Authorizer's decision for API authorization
+type APIAuthorizationResponse struct {
+	// Allowed indicates whether the request should be allowed
+	Allowed bool
+	// Reason is a brief CamelCase reason for rejection
+	Reason string
+	// Message is a human-readable message explaining the decision
+	Message string
+}
+
+// AuthorizerClient is the interface for communicating with Kubelet Authorizer
+type AuthorizerClient interface {
 	// CheckPodAdmission checks if a pod should be admitted
 	CheckPodAdmission(req *PodAdmissionRequest) (*PodAdmissionResponse, error)
 
@@ -107,6 +167,9 @@ type ExternalAgentClient interface {
 	// GetPodMeasurement requests measurements for a pod
 	GetPodMeasurement(req *PodMeasurementRequest) (*PodMeasurementResponse, error)
 
-	// Close closes the connection to the agent
+	// CheckAPIAuthorization checks if an incoming API request should be allowed
+	CheckAPIAuthorization(req *APIAuthorizationRequest) (*APIAuthorizationResponse, error)
+
+	// Close closes the connection to the Authorizer
 	Close() error
 }

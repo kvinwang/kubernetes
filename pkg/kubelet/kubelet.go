@@ -73,7 +73,7 @@ import (
 	dockerremote "k8s.io/kubernetes/pkg/kubelet/dockershim/remote"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/eviction"
-	"k8s.io/kubernetes/pkg/kubelet/externalagent"
+	"k8s.io/kubernetes/pkg/kubelet/authorizer"
 	"k8s.io/kubernetes/pkg/kubelet/images"
 	"k8s.io/kubernetes/pkg/kubelet/kubeletconfig"
 	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
@@ -662,26 +662,26 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		klet.runtimeClassManager = runtimeclass.NewManager(kubeDeps.DynamicKubeClient)
 	}
 
-	// Setup internal container lifecycle, optionally wrapping with external agent
+	// Setup internal container lifecycle, optionally wrapping with Authorizer
 	internalLifecycle := kubeDeps.ContainerManager.InternalContainerLifecycle()
-	if kubeCfg.ExternalAgentSocketPath != "" {
-		glog.Infof("Setting up external agent container lifecycle hooks with socket: %s", kubeCfg.ExternalAgentSocketPath)
-		agentTimeout := kubeCfg.ExternalAgentTimeout.Duration
-		if agentTimeout == 0 {
-			agentTimeout = externalagent.DefaultTimeout
+	if kubeCfg.AuthorizerSocketPath != "" {
+		glog.Infof("Setting up Authorizer container lifecycle hooks with socket: %s", kubeCfg.AuthorizerSocketPath)
+		authTimeout := kubeCfg.AuthorizerTimeout.Duration
+		if authTimeout == 0 {
+			authTimeout = authorizer.DefaultTimeout
 		}
-		agentClient, err := externalagent.NewUnixSocketClient(kubeCfg.ExternalAgentSocketPath, agentTimeout)
+		authClient, err := authorizer.NewClient(kubeCfg.AuthorizerSocketPath, authTimeout)
 		if err != nil {
-			glog.Warningf("Failed to connect to external agent at %s: %v. Container lifecycle hooks will use default behavior.",
-				kubeCfg.ExternalAgentSocketPath, err)
+			glog.Warningf("Failed to connect to Authorizer at %s: %v. Container lifecycle hooks will use default behavior.",
+				kubeCfg.AuthorizerSocketPath, err)
 		} else {
-			klet.externalAgentClient = agentClient
-			internalLifecycle = externalagent.NewExternalAgentContainerLifecycle(
+			klet.authorizerClient = authClient
+			internalLifecycle = authorizer.NewContainerLifecycle(
 				internalLifecycle,
-				agentClient,
-				kubeCfg.ExternalAgentBlockOnLifecycle,
+				authClient,
+				kubeCfg.AuthorizerBlockOnLifecycle,
 			)
-			glog.Infof("External agent container lifecycle hooks registered (block-on-failure: %v)", kubeCfg.ExternalAgentBlockOnLifecycle)
+			glog.Infof("Authorizer container lifecycle hooks registered (block-on-failure: %v)", kubeCfg.AuthorizerBlockOnLifecycle)
 		}
 	}
 
@@ -879,11 +879,11 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	criticalPodAdmissionHandler := preemption.NewCriticalPodAdmissionHandler(klet.GetActivePods, killPodNow(klet.podWorkers, kubeDeps.Recorder), kubeDeps.Recorder)
 	klet.admitHandlers.AddPodAdmitHandler(lifecycle.NewPredicateAdmitHandler(klet.getNodeAnyWay, criticalPodAdmissionHandler, klet.containerManager.UpdatePluginResources))
 
-	// Add external agent pod admission handler if external agent is configured and connected
-	if klet.externalAgentClient != nil {
-		failOpen := kubeCfg.ExternalAgentFailOpen
-		klet.admitHandlers.AddPodAdmitHandler(externalagent.NewExternalAgentAdmitHandler(klet.externalAgentClient, failOpen))
-		glog.Infof("External agent pod admission handler registered (fail-open: %v)", failOpen)
+	// Add Authorizer pod admission handler if Authorizer is configured and connected
+	if klet.authorizerClient != nil {
+		failOpen := kubeCfg.AuthorizerFailOpen
+		klet.admitHandlers.AddPodAdmitHandler(authorizer.NewAdmitHandler(klet.authorizerClient, failOpen))
+		glog.Infof("Authorizer pod admission handler registered (fail-open: %v)", failOpen)
 	}
 
 	// apply functional Option's
@@ -1168,9 +1168,9 @@ type Kubelet struct {
 	// the list of handlers to call during pod admission.
 	admitHandlers lifecycle.PodAdmitHandlers
 
-	// externalAgentClient is the client for communicating with external agent
+	// authorizerClient is the client for communicating with Kubelet Authorizer
 	// for pod admission and container lifecycle hooks
-	externalAgentClient externalagent.ExternalAgentClient
+	authorizerClient authorizer.AuthorizerClient
 
 	// softAdmithandlers are applied to the pod after it is admitted by the Kubelet, but before it is
 	// run. A pod rejected by a softAdmitHandler will be left in a Pending state indefinitely. If a
@@ -2237,7 +2237,7 @@ func (kl *Kubelet) ResyncInterval() time.Duration {
 
 // ListenAndServe runs the kubelet HTTP server.
 func (kl *Kubelet) ListenAndServe(address net.IP, port uint, tlsOptions *server.TLSOptions, auth server.AuthInterface, enableDebuggingHandlers, enableContentionProfiling bool) {
-	server.ListenAndServeKubeletServer(kl, kl.resourceAnalyzer, address, port, tlsOptions, auth, enableDebuggingHandlers, enableContentionProfiling, kl.redirectContainerStreaming, kl.criHandler)
+	server.ListenAndServeKubeletServer(kl, kl.resourceAnalyzer, address, port, tlsOptions, auth, enableDebuggingHandlers, enableContentionProfiling, kl.redirectContainerStreaming, kl.criHandler, kl.authorizerClient)
 }
 
 // ListenAndServeReadOnly runs the kubelet HTTP server in read-only mode.
