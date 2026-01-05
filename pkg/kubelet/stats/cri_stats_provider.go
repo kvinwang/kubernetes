@@ -19,6 +19,7 @@ package stats
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -468,6 +469,10 @@ func getCRICadvisorStats(infos map[string]cadvisorapiv2.ContainerInfo) map[strin
 
 // TODO Cache the metrics in container log manager
 func (p *criStatsProvider) getContainerLogStats(path string, rootFsInfo *cadvisorapiv2.FsInfo) *statsapi.FsStats {
+	// Skip if the log directory doesn't exist (e.g., init container completed)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
 	m := p.logMetricsService.createLogMetricsProvider(path)
 	logMetrics, err := m.GetMetrics()
 	if err != nil {
