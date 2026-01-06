@@ -121,7 +121,7 @@ type ContainerLifecycleRequest struct {
 	PodJson       []byte                  `protobuf:"bytes,1,opt,name=pod_json,json=podJson,proto3" json:"pod_json,omitempty"`
 	ContainerJson []byte                  `protobuf:"bytes,2,opt,name=container_json,json=containerJson,proto3" json:"container_json,omitempty"`
 	ContainerId   string                  `protobuf:"bytes,3,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	Event         ContainerLifecycleEvent `protobuf:"varint,4,opt,name=event,proto3,enum=v1beta1.ContainerLifecycleEvent" json:"event,omitempty"`
+	Event         ContainerLifecycleEvent `protobuf:"varint,4,opt,name=event,proto3,enum=v1.ContainerLifecycleEvent" json:"event,omitempty"`
 }
 
 func (m *ContainerLifecycleRequest) Reset()         { *m = ContainerLifecycleRequest{} }
@@ -383,7 +383,7 @@ func NewAuthorizerServiceClient(cc *grpc.ClientConn) AuthorizerServiceClient {
 
 func (c *authorizerServiceClient) CheckPodAdmission(ctx context.Context, in *PodAdmissionRequest, opts ...grpc.CallOption) (*PodAdmissionResponse, error) {
 	out := new(PodAdmissionResponse)
-	err := grpc.Invoke(ctx, "/v1beta1.AuthorizerService/CheckPodAdmission", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/v1.AuthorizerService/CheckPodAdmission", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +392,7 @@ func (c *authorizerServiceClient) CheckPodAdmission(ctx context.Context, in *Pod
 
 func (c *authorizerServiceClient) OnContainerLifecycle(ctx context.Context, in *ContainerLifecycleRequest, opts ...grpc.CallOption) (*ContainerLifecycleResponse, error) {
 	out := new(ContainerLifecycleResponse)
-	err := grpc.Invoke(ctx, "/v1beta1.AuthorizerService/OnContainerLifecycle", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/v1.AuthorizerService/OnContainerLifecycle", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +401,7 @@ func (c *authorizerServiceClient) OnContainerLifecycle(ctx context.Context, in *
 
 func (c *authorizerServiceClient) GetPodMeasurement(ctx context.Context, in *PodMeasurementRequest, opts ...grpc.CallOption) (*PodMeasurementResponse, error) {
 	out := new(PodMeasurementResponse)
-	err := grpc.Invoke(ctx, "/v1beta1.AuthorizerService/GetPodMeasurement", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/v1.AuthorizerService/GetPodMeasurement", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +410,7 @@ func (c *authorizerServiceClient) GetPodMeasurement(ctx context.Context, in *Pod
 
 func (c *authorizerServiceClient) CheckAPIAuthorization(ctx context.Context, in *APIAuthorizationRequest, opts ...grpc.CallOption) (*APIAuthorizationResponse, error) {
 	out := new(APIAuthorizationResponse)
-	err := grpc.Invoke(ctx, "/v1beta1.AuthorizerService/CheckAPIAuthorization", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/v1.AuthorizerService/CheckAPIAuthorization", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +440,7 @@ func _AuthorizerService_CheckPodAdmission_Handler(srv interface{}, ctx context.C
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/v1beta1.AuthorizerService/CheckPodAdmission",
+		FullMethod: "/v1.AuthorizerService/CheckPodAdmission",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthorizerServiceServer).CheckPodAdmission(ctx, req.(*PodAdmissionRequest))
@@ -458,7 +458,7 @@ func _AuthorizerService_OnContainerLifecycle_Handler(srv interface{}, ctx contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/v1beta1.AuthorizerService/OnContainerLifecycle",
+		FullMethod: "/v1.AuthorizerService/OnContainerLifecycle",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthorizerServiceServer).OnContainerLifecycle(ctx, req.(*ContainerLifecycleRequest))
@@ -476,7 +476,7 @@ func _AuthorizerService_GetPodMeasurement_Handler(srv interface{}, ctx context.C
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/v1beta1.AuthorizerService/GetPodMeasurement",
+		FullMethod: "/v1.AuthorizerService/GetPodMeasurement",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthorizerServiceServer).GetPodMeasurement(ctx, req.(*PodMeasurementRequest))
@@ -494,7 +494,7 @@ func _AuthorizerService_CheckAPIAuthorization_Handler(srv interface{}, ctx conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/v1beta1.AuthorizerService/CheckAPIAuthorization",
+		FullMethod: "/v1.AuthorizerService/CheckAPIAuthorization",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AuthorizerServiceServer).CheckAPIAuthorization(ctx, req.(*APIAuthorizationRequest))
@@ -503,7 +503,7 @@ func _AuthorizerService_CheckAPIAuthorization_Handler(srv interface{}, ctx conte
 }
 
 var _AuthorizerService_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "v1beta1.AuthorizerService",
+	ServiceName: "v1.AuthorizerService",
 	HandlerType: (*AuthorizerServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
