@@ -1017,6 +1017,13 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	}
 	klet.admitHandlers.AddPodAdmitHandler(shutdownManager)
 
+	// Register Authorizer PodAdmitHandler if client is available
+	if kubeDeps.AuthorizerClient != nil {
+		authorizerAdmitHandler := authorizer.NewPodAdmitHandler(kubeDeps.AuthorizerClient, kubeCfg.AuthorizerFailOpen)
+		klet.admitHandlers.AddPodAdmitHandler(authorizerAdmitHandler)
+		klog.InfoS("Registered Authorizer PodAdmitHandler")
+	}
+
 	// Finally, put the most recent version of the config on the Kubelet, so
 	// people can see how it was configured.
 	klet.kubeletConfiguration = *kubeCfg
