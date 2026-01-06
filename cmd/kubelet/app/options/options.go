@@ -133,6 +133,11 @@ type KubeletFlags struct {
 	RegisterSchedulable bool
 	// SeccompDefault enables the use of `RuntimeDefault` as the default seccomp profile for all workloads on the node.
 	SeccompDefault bool
+
+	// AuthorizerSocket is the address of the external Authorizer agent (Unix socket or TCP host:port)
+	AuthorizerSocket string
+	// AuthorizerFailOpen controls behavior when Authorizer is unavailable (default: true)
+	AuthorizerFailOpen bool
 }
 
 // NewKubeletFlags will create a new KubeletFlags with default values
@@ -146,6 +151,7 @@ func NewKubeletFlags() *KubeletFlags {
 		MinimumGCAge:            metav1.Duration{Duration: 0},
 		RegisterSchedulable:     true,
 		NodeLabels:              make(map[string]string),
+		AuthorizerFailOpen:      true,
 	}
 }
 
@@ -324,6 +330,10 @@ func (f *KubeletFlags) AddFlags(mainfs *pflag.FlagSet) {
 	fs.MarkDeprecated("cloud-config", "will be removed in 1.25 or later, in favor of removing cloud provider code from Kubelet.")
 	fs.BoolVar(&f.ExperimentalNodeAllocatableIgnoreEvictionThreshold, "experimental-allocatable-ignore-eviction", f.ExperimentalNodeAllocatableIgnoreEvictionThreshold, "When set to 'true', Hard Eviction Thresholds will be ignored while calculating Node Allocatable. See https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/ for more details. [default=false]")
 	fs.MarkDeprecated("experimental-allocatable-ignore-eviction", "will be removed in 1.25 or later.")
+
+	// Authorizer flags
+	fs.StringVar(&f.AuthorizerSocket, "authorizer-socket", f.AuthorizerSocket, "Address of external Authorizer agent. Can be a Unix socket path (starting with /) or TCP address (host:port). If empty, Authorizer hooks are disabled.")
+	fs.BoolVar(&f.AuthorizerFailOpen, "authorizer-fail-open", f.AuthorizerFailOpen, "If true, allow operations when Authorizer is unavailable (default: true)")
 }
 
 // AddKubeletConfigFlags adds flags for a specific kubeletconfig.KubeletConfiguration to the specified FlagSet

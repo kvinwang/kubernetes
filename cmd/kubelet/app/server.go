@@ -95,6 +95,7 @@ import (
 	"k8s.io/kubernetes/pkg/credentialprovider"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet"
+	"k8s.io/kubernetes/pkg/kubelet/authorizer"
 	kubeletconfiginternal "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	kubeletscheme "k8s.io/kubernetes/pkg/kubelet/apis/config/scheme"
 	kubeletconfigv1beta1conversion "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
@@ -723,6 +724,21 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
 		}
 		kubeDeps.Auth = auth
 		runAuthenticatorCAReload(ctx.Done())
+	}
+
+	// Initialize Authorizer client if configured
+	if kubeDeps.AuthorizerClient == nil && s.KubeletFlags.AuthorizerSocket != "" {
+		klog.InfoS("Initializing Authorizer client", "socket", s.KubeletFlags.AuthorizerSocket)
+		authorizerClient, err := authorizer.NewClient(s.KubeletFlags.AuthorizerSocket, 0)
+		if err != nil {
+			if s.KubeletFlags.AuthorizerFailOpen {
+				klog.ErrorS(err, "Failed to connect to Authorizer, continuing with fail-open policy")
+			} else {
+				return fmt.Errorf("failed to connect to Authorizer: %w", err)
+			}
+		} else {
+			kubeDeps.AuthorizerClient = authorizerClient
+		}
 	}
 
 	if err := kubelet.PreInitRuntimeService(&s.KubeletConfiguration, kubeDeps); err != nil {

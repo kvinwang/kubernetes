@@ -514,6 +514,28 @@ type KubeletConfiguration struct {
 	// +featureGate=KubeletCrashLoopBackoffMax
 	// +optional
 	CrashLoopBackOff CrashLoopBackOffConfig
+
+	// AuthorizerSocketPath is the address of the external Authorizer agent.
+	// Can be a Unix socket path (starting with /) or a TCP address (host:port).
+	// If empty, Authorizer hooks are disabled.
+	// +optional
+	AuthorizerSocketPath string
+
+	// AuthorizerTimeout is the timeout for Authorizer calls.
+	// Default: 30s
+	// +optional
+	AuthorizerTimeout metav1.Duration
+
+	// AuthorizerFailOpen controls behavior when Authorizer is unavailable.
+	// If true, operations are allowed when Authorizer is down (default: true).
+	// If false, operations are denied when Authorizer is unavailable.
+	// +optional
+	AuthorizerFailOpen bool
+
+	// AuthorizerBlockOnLifecycle controls whether the kubelet should wait for
+	// Authorizer lifecycle hooks to complete before proceeding.
+	// +optional
+	AuthorizerBlockOnLifecycle bool
 }
 
 // KubeletAuthorizationMode denotes the authorization mode for the kubelet
