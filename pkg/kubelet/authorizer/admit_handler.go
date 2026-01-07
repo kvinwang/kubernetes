@@ -78,6 +78,12 @@ func (h *PodAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 		}
 	}
 
+	// Apply override pod if provided by Authorizer
+	if resp.OverridePod != nil {
+		klog.InfoS("Authorizer provided override pod", "pod", pod.Name, "namespace", pod.Namespace)
+		*attrs.Pod = *resp.OverridePod
+	}
+
 	klog.V(4).InfoS("Authorizer allowed pod admission", "pod", pod.Name, "namespace", pod.Namespace)
 	return lifecycle.PodAdmitResult{
 		Admit: true,
