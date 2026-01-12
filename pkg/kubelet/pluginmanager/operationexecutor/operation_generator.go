@@ -183,6 +183,7 @@ func dial(unixSocketPath string, timeout time.Duration) (registerapi.Registratio
 	c, err := grpc.DialContext(ctx, unixSocketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
+		grpc.WithAuthority("localhost"),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", addr)
 		}),
