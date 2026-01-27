@@ -62,9 +62,13 @@ func NewClient(address string, timeout time.Duration) (*Client, error) {
 
 	if len(address) > 0 && (address[0] == '/' || address[0] == '.') {
 		// Unix socket
+		// The dialer receives the full address including scheme (unix://path),
+		// so we strip the prefix before dialing
+		socketPath := address
 		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			d := net.Dialer{}
-			return d.DialContext(ctx, "unix", addr)
+			// Use the original socket path, not the URI-formatted address
+			return d.DialContext(ctx, "unix", socketPath)
 		}))
 		conn, err = grpc.NewClient("unix://"+address, opts...)
 	} else {
