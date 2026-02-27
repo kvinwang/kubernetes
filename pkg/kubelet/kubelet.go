@@ -77,10 +77,10 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/api/v1/resource"
 	"k8s.io/kubernetes/pkg/features"
-	"k8s.io/kubernetes/pkg/kubelet/authorizer"
 	kubeletconfiginternal "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/apis/podresources"
+	"k8s.io/kubernetes/pkg/kubelet/authorizer"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	kubeletcertificate "k8s.io/kubernetes/pkg/kubelet/certificate"
 	"k8s.io/kubernetes/pkg/kubelet/cloudresource"
@@ -574,6 +574,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		hostnameOverridden:             hostnameOverridden,
 		nodeName:                       nodeName,
 		kubeClient:                     kubeDeps.KubeClient,
+		authorizerClient:               kubeDeps.AuthorizerClient,
 		heartbeatClient:                kubeDeps.HeartbeatClient,
 		onRepeatedHeartbeatFailure:     kubeDeps.OnHeartbeatFailure,
 		rootDirectory:                  filepath.Clean(rootDirectory),
@@ -1057,10 +1058,11 @@ type Kubelet struct {
 	// hostnameOverridden indicates the hostname was overridden via flag/config
 	hostnameOverridden bool
 
-	nodeName        types.NodeName
-	runtimeCache    kubecontainer.RuntimeCache
-	kubeClient      clientset.Interface
-	heartbeatClient clientset.Interface
+	nodeName         types.NodeName
+	runtimeCache     kubecontainer.RuntimeCache
+	kubeClient       clientset.Interface
+	authorizerClient authorizer.AuthorizerClient
+	heartbeatClient  clientset.Interface
 	// mirrorPodClient is used to create and delete mirror pods in the API for static
 	// pods.
 	mirrorPodClient kubepod.MirrorClient
@@ -2368,6 +2370,39 @@ func (kl *Kubelet) canAdmitPod(allocatedPods []*v1.Pod, pod *v1.Pod) (bool, stri
 	return true, "", ""
 }
 
+func (kl *Kubelet) applyAuthorizerOverrideOnUpdate(pod *v1.Pod) *v1.Pod {
+	if pod == nil || kl.authorizerClient == nil {
+		return pod
+	}
+
+	allocatedPods := kl.getAllocatedPods()
+	allocatedPods = slices.DeleteFunc(allocatedPods, func(existing *v1.Pod) bool {
+		return existing.UID == pod.UID
+	})
+
+	resp, err := kl.authorizerClient.CheckPodAdmission(&authorizer.PodAdmissionRequest{
+		Pod:       pod,
+		OtherPods: allocatedPods,
+	})
+	if err != nil {
+		klog.ErrorS(err, "Authorizer pod update check failed", "pod", klog.KObj(pod), "podUID", pod.UID)
+		return pod
+	}
+	if resp == nil {
+		return pod
+	}
+	if !resp.Allowed {
+		klog.V(2).InfoS("Authorizer denied pod update, keeping original pod spec", "pod", klog.KObj(pod), "podUID", pod.UID, "reason", resp.Reason, "message", resp.Message)
+		return pod
+	}
+	if resp.OverridePod != nil {
+		klog.V(4).InfoS("Authorizer reapplied override pod on update", "pod", klog.KObj(pod), "podUID", pod.UID)
+		return resp.OverridePod
+	}
+
+	return pod
+}
+
 func recordAdmissionRejection(reason string) {
 	// It is possible that the "reason" label can have high cardinality.
 	// To avoid this metric from exploding, we create an allowlist of known
@@ -2693,6 +2728,7 @@ func (kl *Kubelet) HandlePodAdditions(pods []*v1.Pod) {
 func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
+		pod = kl.applyAuthorizerOverrideOnUpdate(pod)
 		kl.podManager.UpdatePod(pod)
 
 		pod, mirrorPod, wasMirror := kl.podManager.GetPodAndMirrorPod(pod)
@@ -2748,6 +2784,7 @@ func (kl *Kubelet) HandlePodRemoves(pods []*v1.Pod) {
 func (kl *Kubelet) HandlePodReconcile(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
+		pod = kl.applyAuthorizerOverrideOnUpdate(pod)
 		// Update the pod in pod manager, status manager will do periodically reconcile according
 		// to the pod manager.
 		kl.podManager.UpdatePod(pod)
