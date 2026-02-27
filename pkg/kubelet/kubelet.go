@@ -574,7 +574,6 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		hostnameOverridden:             hostnameOverridden,
 		nodeName:                       nodeName,
 		kubeClient:                     kubeDeps.KubeClient,
-		authorizerClient:               kubeDeps.AuthorizerClient,
 		heartbeatClient:                kubeDeps.HeartbeatClient,
 		onRepeatedHeartbeatFailure:     kubeDeps.OnHeartbeatFailure,
 		rootDirectory:                  filepath.Clean(rootDirectory),
@@ -619,6 +618,12 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		nodeStatusMaxImages:            nodeStatusMaxImages,
 		tracer:                         tracer,
 		nodeStartupLatencyTracker:      kubeDeps.NodeStartupLatencyTracker,
+	}
+
+	// Avoid assigning nil *Client to interface field (nil pointer wrapped in
+	// non-nil interface defeats == nil checks and causes panic).
+	if kubeDeps.AuthorizerClient != nil {
+		klet.authorizerClient = kubeDeps.AuthorizerClient
 	}
 
 	if klet.cloud != nil {
