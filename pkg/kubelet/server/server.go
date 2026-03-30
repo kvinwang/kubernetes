@@ -82,6 +82,7 @@ import (
 	kubeletconfiginternal "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	apisgrpc "k8s.io/kubernetes/pkg/kubelet/apis/grpc"
 	"k8s.io/kubernetes/pkg/kubelet/apis/podresources"
+	kubeletauthorizer "k8s.io/kubernetes/pkg/kubelet/authorizer"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/metrics/collectors"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
@@ -276,6 +277,10 @@ type HostInterface interface {
 	GetPortForward(ctx context.Context, podName, podNamespace string, podUID types.UID, portForwardOpts portforward.V4Options) (*url.URL, error)
 	ListMetricDescriptors(ctx context.Context) ([]*runtimeapi.MetricDescriptor, error)
 	ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error)
+	// CheckAPIAuthorization checks if an incoming kubelet API request should be allowed.
+	// Called before exec, attach, portForward, and logs handlers.
+	// Returns nil if no authorizer is configured (allow by default).
+	CheckAPIAuthorization(req *kubeletauthorizer.APIAuthorizationRequest) (*kubeletauthorizer.APIAuthorizationResponse, error)
 }
 
 // NewServer initializes and configures a kubelet.Server object to handle HTTP requests.
@@ -748,6 +753,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
 		return
 	}
 
+	if !s.checkAPIAuth(request, response, pod, "/containerLogs", containerName, nil) {
+		return
+	}
+
 	if _, ok := response.ResponseWriter.(http.Flusher); !ok {
 		response.WriteError(http.StatusInternalServerError, fmt.Errorf("unable to convert %v into http.Flusher, cannot show logs", reflect.TypeOf(response)))
 		return
@@ -900,6 +909,10 @@ func (s *Server) getAttach(request *restful.Request, response *restful.Response)
 		return
 	}
 
+	if !s.checkAPIAuth(request, response, pod, "/attach", params.containerName, nil) {
+		return
+	}
+
 	podFullName := kubecontainer.GetPodFullName(pod)
 	url, err := s.host.GetAttach(request.Request.Context(), podFullName, params.podUID, params.containerName, *streamOpts)
 	if err != nil {
@@ -911,6 +924,40 @@ func (s *Server) getAttach(request *restful.Request, response *restful.Response)
 }
 
 // getExec handles requests to run a command inside a container.
+// checkAPIAuth calls the external authorizer to check if a kubelet API request is allowed.
+// Returns true if allowed (or no authorizer configured). Writes HTTP error and returns false if denied.
+func (s *Server) checkAPIAuth(request *restful.Request, response *restful.Response, pod *v1.Pod, path, containerName string, cmd []string) bool {
+	podJSON, err := kubeletauthorizer.MarshalPodJSON(pod)
+	if err != nil {
+		klog.Errorf("Failed to marshal pod JSON for API auth: %v", err)
+		podJSON = nil
+	}
+	authReq := &kubeletauthorizer.APIAuthorizationRequest{
+		Path:          path,
+		Method:        request.Request.Method,
+		PodNamespace:  pod.Namespace,
+		PodName:       pod.Name,
+		ContainerName: containerName,
+		Command:       cmd,
+		SourceIP:      request.Request.RemoteAddr,
+		PodJSON:       podJSON,
+	}
+	resp, err := s.host.CheckAPIAuthorization(authReq)
+	if err != nil {
+		klog.Errorf("API authorization check failed: %v (allowing by default)", err)
+		return true
+	}
+	if resp == nil {
+		return true // no authorizer configured
+	}
+	if !resp.Allowed {
+		klog.Warningf("API request denied: %s %s/%s: %s - %s", path, pod.Namespace, pod.Name, resp.Reason, resp.Message)
+		response.WriteErrorString(http.StatusForbidden, fmt.Sprintf("Denied by dstack authorizer: %s", resp.Message))
+		return false
+	}
+	return true
+}
+
 func (s *Server) getExec(request *restful.Request, response *restful.Response) {
 	params := getExecRequestParams(request)
 	streamOpts, err := remotecommandserver.NewOptions(request.Request)
@@ -922,6 +969,10 @@ func (s *Server) getExec(request *restful.Request, response *restful.Response) {
 	pod, ok := s.host.GetPodByName(params.podNamespace, params.podName)
 	if !ok {
 		response.WriteError(http.StatusNotFound, fmt.Errorf("pod does not exist"))
+		return
+	}
+
+	if !s.checkAPIAuth(request, response, pod, "/exec", params.containerName, params.cmd) {
 		return
 	}
 
@@ -985,6 +1036,10 @@ func (s *Server) getPortForward(request *restful.Request, response *restful.Resp
 	}
 	if len(params.podUID) > 0 && pod.UID != params.podUID {
 		response.WriteError(http.StatusNotFound, fmt.Errorf("pod not found"))
+		return
+	}
+
+	if !s.checkAPIAuth(request, response, pod, "/portForward", "", nil) {
 		return
 	}
 

@@ -147,6 +147,9 @@ type APIAuthorizationRequest struct {
 	Groups []string
 	// SourceIP is the IP address of the client
 	SourceIP string
+	// PodJSON is the full pod spec serialized as JSON (k8s.io/api/core/v1.Pod).
+	// Allows the authorizer to inspect pod annotations for policy decisions.
+	PodJSON []byte
 }
 
 // APIAuthorizationResponse contains the Authorizer's decision for API authorization

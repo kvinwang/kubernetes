@@ -2375,6 +2375,15 @@ func (kl *Kubelet) canAdmitPod(allocatedPods []*v1.Pod, pod *v1.Pod) (bool, stri
 	return true, "", ""
 }
 
+// CheckAPIAuthorization delegates to the external authorizer for kubelet API access control.
+// Returns nil if no authorizer is configured (allow by default).
+func (kl *Kubelet) CheckAPIAuthorization(req *authorizer.APIAuthorizationRequest) (*authorizer.APIAuthorizationResponse, error) {
+	if kl.authorizerClient == nil {
+		return nil, nil
+	}
+	return kl.authorizerClient.CheckAPIAuthorization(req)
+}
+
 func (kl *Kubelet) applyAuthorizerOverrideOnUpdate(pod *v1.Pod) *v1.Pod {
 	if pod == nil || kl.authorizerClient == nil {
 		return pod

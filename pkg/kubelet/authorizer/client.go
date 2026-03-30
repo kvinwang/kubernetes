@@ -220,6 +220,7 @@ func (c *Client) CheckAPIAuthorization(req *APIAuthorizationRequest) (*APIAuthor
 		User:          req.User,
 		Groups:        req.Groups,
 		SourceIp:      req.SourceIP,
+		PodJson:       req.PodJSON,
 	}
 
 	resp, err := c.client.CheckAPIAuthorization(ctx, grpcReq)

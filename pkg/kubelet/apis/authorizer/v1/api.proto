@@ -118,6 +118,10 @@ message APIAuthorizationRequest {
     repeated string groups = 8;
     // SourceIP is the IP address of the client
     string source_ip = 9;
+    // PodJSON is the full pod spec (k8s.io/api/core/v1.Pod serialized as JSON).
+    // Allows the authorizer to inspect pod annotations for policy decisions
+    // (e.g., tee.dstack.org/allow-logs: "true").
+    bytes pod_json = 10;
 }
 
 // APIAuthorizationResponse contains the authorizer's decision for API authorization

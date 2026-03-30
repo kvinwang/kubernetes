@@ -263,6 +263,7 @@ type APIAuthorizationRequest struct {
 	User          string   `protobuf:"bytes,7,opt,name=user,proto3" json:"user,omitempty"`
 	Groups        []string `protobuf:"bytes,8,rep,name=groups,proto3" json:"groups,omitempty"`
 	SourceIp      string   `protobuf:"bytes,9,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	PodJson       []byte   `protobuf:"bytes,10,opt,name=pod_json,json=podJson,proto3" json:"pod_json,omitempty"`
 }
 
 func (m *APIAuthorizationRequest) Reset()         { *m = APIAuthorizationRequest{} }
@@ -330,6 +331,13 @@ func (m *APIAuthorizationRequest) GetSourceIp() string {
 		return m.SourceIp
 	}
 	return ""
+}
+
+func (m *APIAuthorizationRequest) GetPodJson() []byte {
+	if m != nil {
+		return m.PodJson
+	}
+	return nil
 }
 
 // APIAuthorizationResponse contains the authorizer's decision for API authorization
