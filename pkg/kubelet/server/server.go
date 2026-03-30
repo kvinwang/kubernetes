@@ -753,9 +753,7 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
 		return
 	}
 
-	if !s.checkAPIAuth(request, response, pod, "/containerLogs", containerName, nil) {
-		return
-	}
+	// API auth handled by ServeHTTP middleware
 
 	if _, ok := response.ResponseWriter.(http.Flusher); !ok {
 		response.WriteError(http.StatusInternalServerError, fmt.Errorf("unable to convert %v into http.Flusher, cannot show logs", reflect.TypeOf(response)))
@@ -909,9 +907,7 @@ func (s *Server) getAttach(request *restful.Request, response *restful.Response)
 		return
 	}
 
-	if !s.checkAPIAuth(request, response, pod, "/attach", params.containerName, nil) {
-		return
-	}
+	// API auth handled by ServeHTTP middleware
 
 	podFullName := kubecontainer.GetPodFullName(pod)
 	url, err := s.host.GetAttach(request.Request.Context(), podFullName, params.podUID, params.containerName, *streamOpts)
@@ -924,39 +920,48 @@ func (s *Server) getAttach(request *restful.Request, response *restful.Response)
 }
 
 // getExec handles requests to run a command inside a container.
-// checkAPIAuth calls the external authorizer to check if a kubelet API request is allowed.
-// Returns true if allowed (or no authorizer configured). Writes HTTP error and returns false if denied.
-func (s *Server) checkAPIAuth(request *restful.Request, response *restful.Response, pod *v1.Pod, path, containerName string, cmd []string) bool {
-	podJSON, err := kubeletauthorizer.MarshalPodJSON(pod)
-	if err != nil {
-		klog.Errorf("Failed to marshal pod JSON for API auth: %v", err)
-		podJSON = nil
-	}
+// buildAPIAuthRequest constructs an APIAuthorizationRequest from an HTTP request.
+// For pod-level endpoints (exec, attach, logs, portForward, run, checkpoint),
+// extracts pod namespace/name from URL and includes the full pod spec as JSON
+// so the agent can check annotations for fine-grained policy decisions.
+func (s *Server) buildAPIAuthRequest(req *http.Request) *kubeletauthorizer.APIAuthorizationRequest {
 	authReq := &kubeletauthorizer.APIAuthorizationRequest{
-		Path:          path,
-		Method:        request.Request.Method,
-		PodNamespace:  pod.Namespace,
-		PodName:       pod.Name,
-		ContainerName: containerName,
-		Command:       cmd,
-		SourceIP:      request.Request.RemoteAddr,
-		PodJSON:       podJSON,
+		Path:   req.URL.Path,
+		Method: req.Method,
 	}
-	resp, err := s.host.CheckAPIAuthorization(authReq)
-	if err != nil {
-		klog.Errorf("API authorization check failed: %v (allowing by default)", err)
-		return true
+
+	// Extract pod info from URL for pod-level endpoints.
+	// URL patterns: /{endpoint}/{podNamespace}/{podID}/{uid}/{containerName}
+	//           or: /{endpoint}/{podNamespace}/{podID}/{containerName}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	if len(parts) >= 3 {
+		endpoint := parts[0]
+		switch endpoint {
+		case "exec", "attach", "run", "containerLogs", "portForward", "checkpoint":
+			authReq.PodNamespace = parts[1]
+			authReq.PodName = parts[2]
+			if len(parts) >= 5 {
+				// /{endpoint}/{ns}/{pod}/{uid}/{container}
+				authReq.ContainerName = parts[4]
+			} else if len(parts) >= 4 {
+				// /{endpoint}/{ns}/{pod}/{container}
+				authReq.ContainerName = parts[3]
+			}
+			// Look up full pod spec and include as JSON
+			if pod, ok := s.host.GetPodByName(authReq.PodNamespace, authReq.PodName); ok {
+				if podJSON, err := kubeletauthorizer.MarshalPodJSON(pod); err == nil {
+					authReq.PodJSON = podJSON
+				}
+			}
+		}
 	}
-	if resp == nil {
-		return true // no authorizer configured
-	}
-	if !resp.Allowed {
-		klog.Warningf("API request denied: %s %s/%s: %s - %s", path, pod.Namespace, pod.Name, resp.Reason, resp.Message)
-		response.WriteErrorString(http.StatusForbidden, fmt.Sprintf("Denied by dstack authorizer: %s", resp.Message))
-		return false
-	}
-	return true
+
+	return authReq
 }
+
+// checkAPIAuth removed — all API authorization now handled by the ServeHTTP middleware.
+// The middleware calls buildAPIAuthRequest + CheckAPIAuthorization for ALL requests,
+// extracting pod info from URL for pod-level endpoints.
 
 func (s *Server) getExec(request *restful.Request, response *restful.Response) {
 	params := getExecRequestParams(request)
@@ -972,9 +977,7 @@ func (s *Server) getExec(request *restful.Request, response *restful.Response) {
 		return
 	}
 
-	if !s.checkAPIAuth(request, response, pod, "/exec", params.containerName, params.cmd) {
-		return
-	}
+	// API auth handled by ServeHTTP middleware
 
 	podFullName := kubecontainer.GetPodFullName(pod)
 	url, err := s.host.GetExec(request.Request.Context(), podFullName, params.podUID, params.containerName, params.cmd, *streamOpts)
@@ -1039,9 +1042,7 @@ func (s *Server) getPortForward(request *restful.Request, response *restful.Resp
 		return
 	}
 
-	if !s.checkAPIAuth(request, response, pod, "/portForward", "", nil) {
-		return
-	}
+	// API auth handled by ServeHTTP middleware
 
 	url, err := s.host.GetPortForward(request.Request.Context(), pod.Name, pod.Namespace, pod.UID, *portForwardOptions)
 	if err != nil {
@@ -1194,6 +1195,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	startTime := time.Now()
 	defer servermetrics.HTTPRequestsDuration.WithLabelValues(method, path, serverType, longRunning).Observe(servermetrics.SinceInSeconds(startTime))
+
+	// External authorizer: ALL requests go through CheckAPIAuthorization.
+	// The agent decides allow/deny based on path, pod annotations, fuse state, etc.
+	// For pod-level endpoints, we extract pod namespace/name from the URL and
+	// send the full pod spec so the agent can check annotations.
+	if s.host != nil {
+		authReq := s.buildAPIAuthRequest(req)
+		if resp, err := s.host.CheckAPIAuthorization(authReq); err == nil && resp != nil && !resp.Allowed {
+			klog.Warningf("API blocked by dstack authorizer: %s %s: [%s] %s", req.Method, req.URL.Path, resp.Reason, resp.Message)
+			http.Error(w, fmt.Sprintf("Denied: %s", resp.Message), http.StatusForbidden)
+			return
+		}
+	}
 
 	handler.ServeHTTP(w, req)
 }
