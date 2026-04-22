@@ -2384,6 +2384,24 @@ func (kl *Kubelet) CheckAPIAuthorization(req *authorizer.APIAuthorizationRequest
 	return kl.authorizerClient.CheckAPIAuthorization(req)
 }
 
+// applyAuthorizerOverrideOnUpdate runs the external Authorizer against an
+// incoming pod update and decides whether to accept, roll back, or drop it.
+//
+// The Authorizer can deny updates when a pod's security-relevant fields (for
+// example dstack.org/* annotations) have drifted from their admitted values.
+// On denial we must not pass the new spec to the pod manager or pod workers:
+// doing so would let a kubectl-annotate against a running confidential pod
+// silently change what's enforced on the data plane. Instead we:
+//
+//  1. Look up the last spec the pod manager has for this UID and return that.
+//     The caller writes this spec back, producing a no-op update and keeping
+//     the admitted spec authoritative.
+//  2. If no prior spec exists — e.g., the Authorizer came online after the
+//     pod did and has no snapshot yet — return nil. Callers that receive nil
+//     skip this pod for the current resync; the next resync retries.
+//
+// Authorizer RPC errors fall back to returning the incoming pod so transient
+// Authorizer unavailability does not kill legitimate reconciles.
 func (kl *Kubelet) applyAuthorizerOverrideOnUpdate(pod *v1.Pod) *v1.Pod {
 	if pod == nil || kl.authorizerClient == nil {
 		return pod
@@ -2406,8 +2424,16 @@ func (kl *Kubelet) applyAuthorizerOverrideOnUpdate(pod *v1.Pod) *v1.Pod {
 		return pod
 	}
 	if !resp.Allowed {
-		klog.V(2).InfoS("Authorizer denied pod update, keeping original pod spec", "pod", klog.KObj(pod), "podUID", pod.UID, "reason", resp.Reason, "message", resp.Message)
-		return pod
+		if admitted, ok := kl.podManager.GetPodByUID(pod.UID); ok && admitted != nil {
+			klog.InfoS("Authorizer denied pod update, reverting to admitted spec",
+				"pod", klog.KObj(pod), "podUID", pod.UID,
+				"reason", resp.Reason, "message", resp.Message)
+			return admitted
+		}
+		klog.ErrorS(nil, "Authorizer denied pod update and no admitted spec is cached, skipping update",
+			"pod", klog.KObj(pod), "podUID", pod.UID,
+			"reason", resp.Reason, "message", resp.Message)
+		return nil
 	}
 	if resp.OverridePod != nil {
 		klog.V(4).InfoS("Authorizer reapplied override pod on update", "pod", klog.KObj(pod), "podUID", pod.UID)
@@ -2743,6 +2769,11 @@ func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
 		pod = kl.applyAuthorizerOverrideOnUpdate(pod)
+		if pod == nil {
+			// Authorizer denied and no admitted spec was cached; skip
+			// so we don't propagate the drifted spec downstream.
+			continue
+		}
 		kl.podManager.UpdatePod(pod)
 
 		pod, mirrorPod, wasMirror := kl.podManager.GetPodAndMirrorPod(pod)
@@ -2799,6 +2830,11 @@ func (kl *Kubelet) HandlePodReconcile(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
 		pod = kl.applyAuthorizerOverrideOnUpdate(pod)
+		if pod == nil {
+			// Authorizer denied this reconcile and no admitted spec is
+			// cached; skip so drifted spec is not propagated.
+			continue
+		}
 		// Update the pod in pod manager, status manager will do periodically reconcile according
 		// to the pod manager.
 		kl.podManager.UpdatePod(pod)
